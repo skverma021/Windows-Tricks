@@ -1,0 +1,102 @@
+#Requires -Version 3.0
+
+<#
+.SYNOPSIS
+Gets GPO details for a specified OU and its sub-OUs, displayed in a table format.
+
+.DESCRIPTION
+This script retrieves GPO information for a given Organizational Unit (OU) and all its sub-OUs. It displays the linked and inherited GPOs for each OU in a table format.
+
+.PARAMETER OUPath
+Specifies the distinguished name of the OU to process.
+
+.EXAMPLE
+Get-OUGPOReportTable.ps1 -OUPath "OU=MyOU,DC=example,DC=com"
+
+.NOTES
+Requires the Active Directory module and GroupPolicy module to be installed.
+#>
+
+param (
+    [string]$OUPath
+)
+
+# Import the Active Directory and GroupPolicy modules
+Import-Module ActiveDirectory
+Import-Module GroupPolicy # Added line
+
+# Function to get linked GPOs for an OU
+function Get-LinkedGPOs {
+    param (
+        [string]$OU
+    )
+
+    try {
+        $LinkedGPOs = Get-ADOrganizationalUnit $OU -Properties gPLink | Select-Object -ExpandProperty gPLink
+        if ($LinkedGPOs) {
+            $LinkedGPOs | ForEach-Object {
+                $GPOName = ($_ -split "]")[1] -replace "CN=", "" -replace ",.*", ""
+                $GPOName
+            }
+        } else {
+            "None"
+        }
+    } catch {
+        Write-Warning ("Error getting linked GPOs for OU: " + $OU + " - " + $_.Exception.Message)
+        "Error"
+    }
+}
+
+# Function to get inherited GPOs for an OU
+function Get-InheritedGPOs {
+    param (
+        [string]$OU
+    )
+
+    try {
+        $InheritedGPOs = Get-GPO -All | Where-Object { (Get-GPOInheritance -Target $OU).GPOs -contains $_.Id } | Select-Object DisplayName
+        if ($InheritedGPOs) {
+            $InheritedGPOs | ForEach-Object {
+                $_.DisplayName
+            }
+        } else {
+            "None"
+        }
+    } catch {
+        Write-Warning ("Error getting inherited GPOs for OU: " + $OU + " - " + $_.Exception.Message)
+        "Error"
+    }
+}
+
+# Function to get all sub-OUs
+function Get-SubOUs {
+    param (
+        [string]$OU
+    )
+
+    try {
+        $SubOUs = Get-ADOrganizationalUnit -Filter { DistinguishedName -like "*,$OU" } -Properties DistinguishedName | Sort-Object DistinguishedName
+        return $SubOUs
+    } catch {
+        Write-Warning ("Error getting sub-OUs for OU: " + $OU + " - " + $_.Exception.Message)
+        return @()
+    }
+}
+
+# Main script logic
+try {
+    $RootOU = Get-ADOrganizationalUnit $OUPath -Properties DistinguishedName
+    $OUs = @($RootOU) + (Get-SubOUs -OU $RootOU.DistinguishedName)
+
+    $Report = foreach ($OU in $OUs) {
+        [PSCustomObject]@{
+            OU        = $OU.DistinguishedName
+            LinkedGPOs   = (Get-LinkedGPOs -OU $OU.DistinguishedName) -join ", "
+            InheritedGPOs = (Get-InheritedGPOs -OU $OU.DistinguishedName) -join ", "
+        }
+    }
+
+    $Report | Format-Table -AutoSize
+} catch {
+    Write-Warning ("Error processing OU: " + $OUPath + " - " + $_.Exception.Message)
+}
