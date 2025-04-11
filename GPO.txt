@@ -1,0 +1,102 @@
+#Requires -Version 3.0
+
+<#
+.SYNOPSIS
+Gets OU-wise Group Policy Object (GPO) details, including linked and inherited GPOs.
+
+.DESCRIPTION
+This script retrieves GPO information for each Organizational Unit (OU) in the Active Directory domain. It displays the linked GPOs and inherited GPOs for each OU.
+
+.PARAMETER OUPath
+Specifies the distinguished name of the OU to process. If not provided, the script processes all OUs in the domain.
+
+.EXAMPLE
+Get-OUGPOReport.ps1 -OUPath "OU=MyOU,DC=example,DC=com"
+
+.EXAMPLE
+Get-OUGPOReport.ps1
+
+.NOTES
+Requires the Active Directory module to be installed.
+#>
+
+param (
+    [string]$OUPath
+)
+
+# Import the Active Directory module
+Import-Module ActiveDirectory
+
+# Function to get linked GPOs for an OU
+function Get-LinkedGPOs {
+    param (
+        [string]$OU
+    )
+
+    try {
+        $LinkedGPOs = Get-ADOrganizationalUnit $OU -Properties gPLink | Select-Object -ExpandProperty gPLink
+        if ($LinkedGPOs) {
+            $LinkedGPOs | ForEach-Object {
+                $GPOName = ($_ -split "]")[1] -replace "CN=", "" -replace ",.*", ""
+                Write-Output ("  Linked: " + $GPOName)
+            }
+        } else {
+            Write-Output "  Linked: None"
+        }
+    } catch {
+        Write-Warning ("Error getting linked GPOs for OU: " + $OU + " - " + $_.Exception.Message)
+        Write-Output "  Linked: Error retrieving data."
+    }
+}
+
+# Function to get inherited GPOs for an OU
+function Get-InheritedGPOs {
+    param (
+        [string]$OU
+    )
+
+    try {
+
+        $InheritedGPOs = Get-GPO -All | Where-Object { (Get-GPOInheritance -Target $OU).GPOs -contains $_.Id } | Select-Object DisplayName
+        if ($InheritedGPOs) {
+             $InheritedGPOs | ForEach-Object {
+                Write-Output ("  Inherited: " + $_.DisplayName)
+            }
+
+        }
+        else{
+            Write-Output "  Inherited: None"
+        }
+
+    } catch {
+        Write-Warning ("Error getting inherited GPOs for OU: " + $OU + " - " + $_.Exception.Message)
+        Write-Output "  Inherited: Error retrieving data."
+    }
+}
+
+# Main script logic
+if ($OUPath) {
+    # Process a single OU
+    try {
+        $OU = Get-ADOrganizationalUnit $OUPath -Properties DistinguishedName
+        Write-Host ("OU: " + $OU.DistinguishedName)
+        Get-LinkedGPOs -OU $OU.DistinguishedName
+        Get-InheritedGPOs -OU $OU.DistinguishedName
+        Write-Host "-----------------------------"
+    } catch {
+        Write-Warning ("Error processing OU: " + $OUPath + " - " + $_.Exception.Message)
+    }
+} else {
+    # Process all OUs in the domain
+    try {
+        $OUs = Get-ADOrganizationalUnit -Filter * -Properties DistinguishedName | Sort-Object DistinguishedName
+        foreach ($OU in $OUs) {
+            Write-Host ("OU: " + $OU.DistinguishedName)
+            Get-LinkedGPOs -OU $OU.DistinguishedName
+            Get-InheritedGPOs -OU $OU.DistinguishedName
+            Write-Host "-----------------------------"
+        }
+    } catch {
+        Write-Warning ("Error processing OUs: " + $_.Exception.Message)
+    }
+}
