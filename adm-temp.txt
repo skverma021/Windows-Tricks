@@ -1,0 +1,174 @@
+<#
+.SYNOPSIS
+    Validates current administrative template settings against reference configurations.
+.DESCRIPTION
+    This script checks various registry-based policy settings against a reference configuration
+    and reports compliance status in a CSV file.
+.OUTPUTS
+    Generates a CSV file with validation results.
+#>
+
+# Output file path
+$outputFile = "AdminTemplate_Validation_Results_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+
+# Reference settings from the file (grouped by registry path)
+$referenceSettings = @{
+    # Screen saver settings
+    "ScreenSaverGracePeriod" = @{
+        Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+        Name = "ScreenSaverGracePeriod"
+        ExpectedValue = "0"
+    }
+    
+    # RPC settings
+    "RPC over TCP port" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Rpc"
+        Name = "Ports"
+        ExpectedValue = "0"
+    }
+    
+    # Autoplay settings
+    "Turn off Autoplay" = @{
+        Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+        Name = "NoAutoplayfornonVolume"
+        ExpectedValue = "1"
+    }
+    
+    # SMB settings
+    "Configure SMB v1 client driver" = @{
+        Path = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+        Name = "DependOnService"
+        ExpectedValue = "Bowser|MRxSmb20|NSI"
+    }
+    
+    # Security settings
+    "WDigest Authentication" = @{
+        Path = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest"
+        Name = "UseLogonCredential"
+        ExpectedValue = "0"
+    }
+    
+    # Network settings
+    "Enable insecure guest logons" = @{
+        Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\LanmanWorkstation"
+        Name = "AllowInsecureGuestAuth"
+        ExpectedValue = "0"
+    }
+    
+    # Privacy settings
+    "Allow Cortana" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
+        Name = "AllowCortana"
+        ExpectedValue = "0"
+    }
+    
+    # Device control
+    "Enumeration policy for external devices" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions"
+        Name = "DenyDeviceIDsRetroactive"
+        ExpectedValue = "1"
+    }
+    
+    # UAC settings
+    "Apply UAC restrictions to local accounts" = @{
+        Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+        Name = "LocalAccountTokenFilterPolicy"
+        ExpectedValue = "0"
+    }
+    
+    # Defender settings
+    "Configure Windows Defender SmartScreen" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
+        Name = "EnableSmartScreen"
+        ExpectedValue = "0"
+    }
+    
+    # Remote Desktop settings
+    "Always prompt for password upon connection" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+        Name = "fPromptForPassword"
+        ExpectedValue = "1"
+    }
+    
+    # Power settings
+    "Require a password when a computer wakes" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\0e796bdb-100d-47d6-a2d5-f7d2daa51f51"
+        Name = "DCSettingIndex"
+        ExpectedValue = "1"
+    }
+    
+    # Print settings
+    "Point and Print Restrictions" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint"
+        Name = "RestrictDriverInstallationToAdministrators"
+        ExpectedValue = "1"
+    }
+    
+    # App settings
+    "Turn off the Store application" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore"
+        Name = "RemoveWindowsStore"
+        ExpectedValue = "1"
+    }
+    
+    # Script logging
+    "Turn on PowerShell Script Block Logging" = @{
+        Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"
+        Name = "EnableScriptBlockLogging"
+        ExpectedValue = "1"
+    }
+}
+
+# Initialize results array
+$results = @()
+
+# Function to check registry value
+function Check-RegistryValue {
+    param (
+        [string]$path,
+        [string]$name,
+        [string]$expectedValue,
+        [string]$settingName
+    )
+    
+    $result = [PSCustomObject]@{
+        SettingName = $settingName
+        ExpectedValue = $expectedValue
+        ActualValue = $null
+        Status = "Not Checked"
+    }
+    
+    try {
+        $regValue = Get-ItemProperty -Path $path -Name $name -ErrorAction Stop
+        $actualValue = $regValue.$name
+        
+        $result.ActualValue = $actualValue
+        
+        # Special handling for multi-string and expandable string values
+        if ($actualValue -is [array]) {
+            $actualValue = $actualValue -join "|"
+        }
+        
+        if ($actualValue -eq $expectedValue) {
+            $result.Status = "Compliant"
+        } else {
+            $result.Status = "Non-Compliant"
+        }
+    } catch {
+        $result.ActualValue = "Not Found"
+        $result.Status = if ($expectedValue -eq $null -or $expectedValue -eq "") { "Compliant (Not Configured)" } else { "Error" }
+    }
+    
+    return $result
+}
+
+# Validate each setting
+foreach ($settingName in $referenceSettings.Keys) {
+    $setting = $referenceSettings[$settingName]
+    $results += Check-RegistryValue -path $setting.Path -name $setting.Name -expectedValue $setting.ExpectedValue -settingName $settingName
+}
+
+# Export results to CSV
+$results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+
+Write-Host "Administrative template validation complete. Results saved to $outputFile" -ForegroundColor Green
