@@ -1,0 +1,100 @@
+<#
+.SYNOPSIS
+    Validates current audit policy settings against reference configurations.
+.DESCRIPTION
+    This script checks audit policy subcategories against a reference configuration
+    and reports compliance status in a CSV file.
+.OUTPUTS
+    Generates a CSV file with validation results.
+#>
+
+# Output file path
+$outputFile = "AuditPolicy_Validation_Results_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+
+# Reference audit policies from the file (corrected spelling of "Audit")
+$referenceAuditPolicies = @{
+    "Detailed File Share" = "Failure"
+    "Other Policy Change Events" = "Failure"
+    "Non Sensitive Privilege Use" = "Failure"
+    "Other Privilege Use Events" = "Failure"
+    "Security Group Management" = "Success"
+    "PNP Activity" = "Success"
+    "Group Membership" = "Success"
+    "Logoff" = "Success"
+    "Special Logon" = "Success"
+    "Authentication Policy Change" = "Success"
+    "Authorization Policy Change" = "Success"
+    "Credential Validation" = "Success, Failure"
+    "Application Group Management" = "Success, Failure"
+    "Computer Account Management" = "Success, Failure"
+    "Other Account Management Events" = "Success, Failure"
+    "User Account Management" = "Success, Failure"
+    "Process Creation" = "Success, Failure"
+    "Process Termination" = "Success, Failure"
+    "Account Lockout" = "Success, Failure"
+    "Logon" = "Success, Failure"
+    "Other Logon/Logoff Events" = "Success, Failure"
+    "File Share" = "Success, Failure"
+    "Other Object Access Events" = "Success, Failure"
+    "Removable Storage" = "Success, Failure"
+    "Audit Policy Change" = "Success, Failure"
+    "MPSSVC Rule-Level Policy Change" = "Success, Failure"
+    "Sensitive Privilege Use" = "Success, Failure"
+    "IPsec Driver" = "Success, Failure"
+    "Other System Events" = "Success, Failure"
+    "Security State Change" = "Success, Failure"
+    "Security System Extension" = "Success, Failure"
+    "System Integrity" = "Success, Failure"
+}
+
+# Initialize results array
+$results = @()
+
+# Get current audit policies
+$currentAuditPolicies = auditpol /get /category:* | Where-Object { $_ -match "^  (.*)\s+(Success|Failure|No Auditing)\s+(Success|Failure|No Auditing)" }
+
+# Validate each policy
+foreach ($policyName in $referenceAuditPolicies.Keys) {
+    $expectedSetting = $referenceAuditPolicies[$policyName]
+    
+    $result = [PSCustomObject]@{
+        PolicyName = $policyName
+        ExpectedSetting = $expectedSetting
+        ActualSuccess = $null
+        ActualFailure = $null
+        Status = "Not Checked"
+    }
+    
+    # Find the matching policy in current settings
+    $matchingPolicy = $currentAuditPolicies | Where-Object { $_ -match "^  $policyName\s+" }
+    
+    if ($matchingPolicy) {
+        $policyParts = $matchingPolicy -split "\s+" | Where-Object { $_ -ne "" }
+        $successSetting = $policyParts[1]
+        $failureSetting = $policyParts[2]
+        
+        $result.ActualSuccess = $successSetting
+        $result.ActualFailure = $failureSetting
+        
+        # Determine expected success and failure settings
+        $expectedSuccess = if ($expectedSetting -match "Success") { "Success" } else { "No Auditing" }
+        $expectedFailure = if ($expectedSetting -match "Failure") { "Failure" } else { "No Auditing" }
+        
+        if ($successSetting -eq $expectedSuccess -and $failureSetting -eq $expectedFailure) {
+            $result.Status = "Compliant"
+        } else {
+            $result.Status = "Non-Compliant"
+        }
+    } else {
+        $result.ActualSuccess = "Not Found"
+        $result.ActualFailure = "Not Found"
+        $result.Status = "Error"
+    }
+    
+    $results += $result
+}
+
+# Export results to CSV
+$results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+
+Write-Host "Audit policy validation complete. Results saved to $outputFile" -ForegroundColor Green
